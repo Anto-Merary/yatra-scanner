@@ -1,13 +1,15 @@
 /**
- * Admin Override Service
+ * Admin Override Service — YATRA 2026
  * 
- * Handles all admin-only operations:
- * - Force allow entry
- * - Reset entry
+ * Handles admin-only operations:
+ * - Force allow entry (with day selection)
+ * - Reset entry (with day selection)
  * - Override logging
  * 
- * CRITICAL: These functions bypass normal validation
- * Only accessible with valid admin PIN
+ * p_day values:
+ *   0 = Reset ALL (day1 + day2 + event)
+ *   1 = Day 1 / Event (depending on category)
+ *   2 = Day 2 / Event (depending on category)
  */
 
 import { supabase } from './supabase';
@@ -16,7 +18,7 @@ import { supabase } from './supabase';
  * Admin action to force allow entry for a ticket
  * 
  * @param {string} ticketId - UUID of ticket
- * @param {number} day - Optional day parameter (kept for compatibility, not used)
+ * @param {number} day - Day to force: 1 or 2
  * @param {string} reason - Admin's reason for override
  * @param {string} adminIdentifier - Admin name/ID for audit
  * @returns {Promise<{success: boolean, message: string}>}
@@ -32,6 +34,7 @@ export async function adminForceAllow(ticketId, day, reason, adminIdentifier) {
 
     const { data, error } = await supabase.rpc('admin_force_allow', {
       p_ticket_id: ticketId,
+      p_day: day || 1,
       p_reason: reason.trim(),
       p_admin_identifier: adminIdentifier.trim()
     });
@@ -58,7 +61,7 @@ export async function adminForceAllow(ticketId, day, reason, adminIdentifier) {
  * Admin action to reset entry for a ticket
  * 
  * @param {string} ticketId - UUID of ticket
- * @param {number} day - Optional day parameter (kept for compatibility, not used)
+ * @param {number} day - Day to reset: 0 (all), 1, or 2
  * @param {string} reason - Admin's reason for reset
  * @param {string} adminIdentifier - Admin name/ID for audit
  * @returns {Promise<{success: boolean, message: string}>}
@@ -74,6 +77,7 @@ export async function adminResetEntry(ticketId, day, reason, adminIdentifier) {
 
     const { data, error } = await supabase.rpc('admin_reset_entry', {
       p_ticket_id: ticketId,
+      p_day: typeof day === 'number' ? day : 0,
       p_reason: reason.trim(),
       p_admin_identifier: adminIdentifier.trim()
     });

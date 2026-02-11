@@ -1,40 +1,43 @@
 /**
- * ResultScreen Component
+ * ResultScreen Component — YATRA 2026
  * 
  * Full-screen result display after ticket verification.
  * GREEN = Entry allowed
  * RED = Entry rejected
  * 
- * Shows comprehensive ticket details:
- * - Name, Email, College, Phone
- * - Ticket type and 6-digit code
- * - Entry status with timestamp
- * - RIT student badge
+ * Handles all 9 result codes from validate_scan:
+ *   VALID, TICKET_NOT_FOUND, TICKET_REVOKED, INVALID_DAY,
+ *   TOO_EARLY_ENTRY, WRONG_GATE, EVENT_ONLY_TICKET,
+ *   ALREADY_USED_TODAY, REPLAY_ATTACK
  */
 
 import { useEffect } from 'react';
+import { ResultDisplayText, CategoryNames } from '../lib/ticketVerification';
 
 export default function ResultScreen({ result, onDismiss, onManualSearch }) {
   const {
     allowed,
     reason,
     message,
-    ticket_type,
-    ticketType, // Legacy support
-    name,
-    email,
-    college,
-    phone,
-    code_6_digit,
-    is_rit_student,
-    last_used_at,
-    ticket_id
+    ticket,  // Sub-object from validate_scan RPC
   } = result;
 
-  // Use either new or legacy ticket type field
-  const displayTicketType = ticket_type || ticketType;
+  // Extract ticket details (may be null for some error states)
+  const name = ticket?.name;
+  const email = ticket?.email;
+  const college = ticket?.college;
+  const phone = ticket?.phone;
+  const code6Digit = ticket?.code_6_digit;
+  const category = ticket?.category;
+  const ticketType = ticket?.ticket_type;
+  const isRitStudent = ticket?.is_rit_student;
+  const eventId = ticket?.event_id;
+  const ticketId = ticket?.ticket_id;
+  const validDays = ticket?.valid_days;
+  const usageDay1 = ticket?.usage_day1;
+  const usageDay2 = ticket?.usage_day2;
 
-  // Auto-dismiss after 6 seconds (increased for more info)
+  // Auto-dismiss after 6 seconds
   useEffect(() => {
     const timer = setTimeout(() => {
       onDismiss();
@@ -43,20 +46,21 @@ export default function ResultScreen({ result, onDismiss, onManualSearch }) {
     return () => clearTimeout(timer);
   }, [onDismiss]);
 
-  // Get display text based on reason
+  // Get display text for the result
   const getReasonText = () => {
-    switch (reason) {
-      case 'VALID':
-        return 'ENTRY ALLOWED';
-      case 'ALREADY_USED':
-        return 'ALREADY USED TODAY';
-      case 'INVALID_TICKET':
-        return 'INVALID TICKET';
-      case 'ERROR':
-        return 'SYSTEM ERROR';
-      default:
-        return 'REJECTED';
-    }
+    return ResultDisplayText[reason] || 'REJECTED';
+  };
+
+  // Get category display name
+  const getCategoryName = () => {
+    if (!category) return null;
+    return CategoryNames[category] || `Category ${category}`;
+  };
+
+  // Get category CSS class
+  const getCategoryClass = () => {
+    if (!category) return '';
+    return `cat-${category}`;
   };
 
   // Get current time formatted
@@ -74,8 +78,8 @@ export default function ResultScreen({ result, onDismiss, onManualSearch }) {
     year: 'numeric'
   });
 
-  // Format last used time if available
-  const formatLastUsed = (timestamp) => {
+  // Format timestamp for display
+  const formatTimestamp = (timestamp) => {
     if (!timestamp) return null;
     const date = new Date(timestamp);
     return date.toLocaleString('en-IN', {
@@ -85,6 +89,28 @@ export default function ResultScreen({ result, onDismiss, onManualSearch }) {
       day: '2-digit',
       month: 'short'
     });
+  };
+
+  // Get contextual hint for rejection reason
+  const getReasonHint = () => {
+    switch (reason) {
+      case 'TOO_EARLY_ENTRY':
+        return 'Entry allowed only after 3:00 PM';
+      case 'WRONG_GATE':
+        return eventId ? `This ticket is for event: ${eventId}` : 'Wrong gate for this ticket type';
+      case 'EVENT_ONLY_TICKET':
+        return `Go to event gate: EVENT_${eventId}`;
+      case 'INVALID_DAY':
+        return validDays ? `Valid on: ${validDays.join(', ')}` : 'Not valid today';
+      case 'ALREADY_USED_TODAY':
+        return 'Ticket has already been scanned today';
+      case 'REPLAY_ATTACK':
+        return 'Wait a few seconds between scans';
+      case 'TICKET_REVOKED':
+        return 'This ticket has been revoked by admin';
+      default:
+        return null;
+    }
   };
 
   return (
@@ -107,19 +133,29 @@ export default function ResultScreen({ result, onDismiss, onManualSearch }) {
         <div className="result-ticket-card">
           {/* Badge Row */}
           <div className="result-badges">
-            {displayTicketType && (
-              <span className="result-badge badge-type">
-                {displayTicketType}
+            {category && (
+              <span className={`result-badge badge-category ${getCategoryClass()}`}>
+                {getCategoryName()}
               </span>
             )}
-            {is_rit_student && (
+            {ticketType && !category && (
+              <span className="result-badge badge-type">
+                {ticketType}
+              </span>
+            )}
+            {isRitStudent && (
               <span className="result-badge badge-rit">
                 RIT STUDENT
               </span>
             )}
-            {code_6_digit && (
+            {code6Digit && (
               <span className="result-badge badge-code">
-                #{code_6_digit}
+                #{code6Digit}
+              </span>
+            )}
+            {eventId && (
+              <span className="result-badge badge-event">
+                {eventId.replace(/_/g, ' ')}
               </span>
             )}
           </div>
@@ -151,6 +187,13 @@ export default function ResultScreen({ result, onDismiss, onManualSearch }) {
             )}
           </div>
 
+          {/* Reason Hint (for rejections) */}
+          {!allowed && getReasonHint() && (
+            <div className="result-reason-hint">
+              ⓘ {getReasonHint()}
+            </div>
+          )}
+
           {/* Entry Time Info */}
           <div className="result-time-section">
             <div className="result-time-row">
@@ -161,10 +204,16 @@ export default function ResultScreen({ result, onDismiss, onManualSearch }) {
               <span className="time-label">Date:</span>
               <span className="time-value">{currentDate}</span>
             </div>
-            {!allowed && last_used_at && (
+            {!allowed && usageDay1 && (
               <div className="result-time-row warning">
-                <span className="time-label">Last Entry:</span>
-                <span className="time-value">{formatLastUsed(last_used_at)}</span>
+                <span className="time-label">Day 1 Entry:</span>
+                <span className="time-value">{formatTimestamp(usageDay1)}</span>
+              </div>
+            )}
+            {!allowed && usageDay2 && (
+              <div className="result-time-row warning">
+                <span className="time-label">Day 2 Entry:</span>
+                <span className="time-value">{formatTimestamp(usageDay2)}</span>
               </div>
             )}
           </div>

@@ -1,22 +1,23 @@
 /**
- * Scanner Component
+ * Scanner Component — YATRA 2026
  * 
  * Main scanner interface with:
- * 1. QR Scan - Camera-based QR code scanning
+ * 1. QR Scan - Camera-based QR code scanning (reads qr_token)
  * 2. Manual Entry - 6-digit code input
  * 3. Search - Fallback ticket lookup
  * 4. Admin Override - Protected admin actions
  * 
- * CRITICAL: Uses explicit day selection (not auto-detection)
+ * Gate type is configured via VITE_GATE_TYPE env var.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import QRScanner from './QRScanner';
 import ManualEntry from './ManualEntry';
 import FallbackSearch from './FallbackSearch';
 import ResultScreen from './ResultScreen';
 import AdminOverride from './AdminOverride';
-import { verifyTicketById, verifyTicketByCode } from '../lib/ticketVerification';
+import { verifyTicketByQRToken, verifyTicketByCode } from '../lib/ticketVerification';
+import { getGateType, getScannerDevice } from '../lib/supabase';
 import { logout } from './PasswordGate';
 
 const MODES = {
@@ -31,27 +32,36 @@ export default function Scanner({ onLogout }) {
   const [verifying, setVerifying] = useState(false);
   const [showAdminOverride, setShowAdminOverride] = useState(false);
 
-  // Handle QR code scan
+  // Gate configuration (read once from env)
+  const gateType = useMemo(() => getGateType(), []);
+  const scannerDevice = useMemo(() => getScannerDevice(), []);
+
+  // Format gate type for display
+  const gateDisplayName = useMemo(() => {
+    if (gateType === 'CONFERENCE') return 'CONFERENCE';
+    if (gateType.startsWith('EVENT_')) return gateType.replace('EVENT_', '').replace(/_/g, ' ').toUpperCase();
+    return gateType;
+  }, [gateType]);
+
+  // Handle QR code scan — the decoded text IS the qr_token
   const handleQRScan = useCallback(async (scannedText) => {
-    if (verifying) return; // Prevent double-scan
-    
+    if (verifying) return;
+
     setVerifying(true);
-    // Single ticket type - no day parameter needed
-    const verificationResult = await verifyTicketById(scannedText);
+    const verificationResult = await verifyTicketByQRToken(scannedText, gateType, scannerDevice);
     setResult(verificationResult);
     setVerifying(false);
-  }, [verifying]);
+  }, [verifying, gateType, scannerDevice]);
 
   // Handle manual code entry
   const handleManualEntry = useCallback(async (code) => {
     if (verifying) return;
-    
+
     setVerifying(true);
-    // Single ticket type - no day parameter needed
-    const verificationResult = await verifyTicketByCode(code);
+    const verificationResult = await verifyTicketByCode(code, gateType, scannerDevice);
     setResult(verificationResult);
     setVerifying(false);
-  }, [verifying]);
+  }, [verifying, gateType, scannerDevice]);
 
   // Handle search result verification
   const handleSearchResult = useCallback((verificationResult) => {
@@ -102,6 +112,7 @@ export default function Scanner({ onLogout }) {
       <header className="scanner-header">
         <div className="header-left">
           <h1>YATRA</h1>
+          <span className="gate-type-badge">{gateDisplayName}</span>
         </div>
         <button className="logout-btn" onClick={handleLogout}>
           Logout
@@ -147,14 +158,18 @@ export default function Scanner({ onLogout }) {
         )}
 
         {mode === MODES.SEARCH && (
-          <FallbackSearch onResult={handleSearchResult} />
+          <FallbackSearch
+            onResult={handleSearchResult}
+            gateType={gateType}
+            scannerDevice={scannerDevice}
+          />
         )}
       </main>
 
       {/* Footer with admin override and status */}
       <footer className="scanner-footer">
-        <p>Ready to scan</p>
-        <button 
+        <p>{scannerDevice} • Ready to scan</p>
+        <button
           className="admin-override-trigger"
           onClick={() => setShowAdminOverride(true)}
         >

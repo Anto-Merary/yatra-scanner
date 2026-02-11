@@ -1,85 +1,109 @@
 /**
- * Ticket Verification Logic
+ * Ticket Verification Logic — YATRA 2026
  * 
- * This module handles all ticket verification operations.
- * 
- * CRITICAL: The actual atomic verification happens in the Postgres function
- * `verify_and_mark_ticket`. This ensures that even if two volunteers scan
- * the same ticket at the exact same moment, only ONE will succeed.
- * 
- * The row-level lock (FOR UPDATE) in the SQL function prevents race conditions.
+ * Uses the `validate_scan` PostgreSQL RPC function for all verification.
+ * This function implements a 7-step validation pipeline:
+ *   1. Lookup ticket by qr_token
+ *   2. Anti-abuse (5s replay guard)
+ *   3. Status check (active/revoked)
+ *   4. Day validity check
+ *   5. Time restriction (Cat 3/4 → after 3PM only)
+ *   6. Gate validity (CONFERENCE vs EVENT_<id>)
+ *   7. Usage check + mark used
+ *
+ * The RPC is SECURITY DEFINER so it bypasses RLS.
  */
 
 import { supabase } from './supabase';
 
 /**
- * Result codes for ticket verification
+ * All possible result codes from the validate_scan RPC
  */
-export const VerificationResult = {
-  VALID: 'VALID',           // Entry allowed
-  ALREADY_USED: 'ALREADY_USED', // Ticket already scanned (within 14-hour cooldown)
-  INVALID_TICKET: 'INVALID_TICKET', // Ticket not found
-  ERROR: 'ERROR',           // System error
+export const ResultCodes = {
+  VALID: 'VALID',
+  TICKET_NOT_FOUND: 'TICKET_NOT_FOUND',
+  TICKET_REVOKED: 'TICKET_REVOKED',
+  INVALID_DAY: 'INVALID_DAY',
+  TOO_EARLY_ENTRY: 'TOO_EARLY_ENTRY',
+  WRONG_GATE: 'WRONG_GATE',
+  EVENT_ONLY_TICKET: 'EVENT_ONLY_TICKET',
+  ALREADY_USED_TODAY: 'ALREADY_USED_TODAY',
+  REPLAY_ATTACK: 'REPLAY_ATTACK',
+  ERROR: 'ERROR',
 };
 
 /**
- * Verify a ticket by UUID (from QR code)
- * 
- * Single ticket type valid for both days.
- * Auto-refreshes after 14 hours (12-16 hour range midpoint).
- * 
- * @param {string} ticketId - UUID from QR code
- * @param {number} currentDay - Optional day parameter (kept for compatibility, not used in verification)
- * @returns {Promise<{
- *   allowed: boolean,
- *   reason: string,
- *   message: string,
- *   ticketType?: string,
- *   name?: string
- * }>}
+ * Human-readable display text for each result code
  */
-export async function verifyTicketById(ticketId, currentDay) {
+export const ResultDisplayText = {
+  VALID: 'ENTRY ALLOWED',
+  TICKET_NOT_FOUND: 'INVALID TICKET',
+  TICKET_REVOKED: 'TICKET REVOKED',
+  INVALID_DAY: 'WRONG DAY',
+  TOO_EARLY_ENTRY: 'TOO EARLY',
+  WRONG_GATE: 'WRONG GATE',
+  EVENT_ONLY_TICKET: 'EVENT GATE ONLY',
+  ALREADY_USED_TODAY: 'ALREADY USED',
+  REPLAY_ATTACK: 'DUPLICATE SCAN',
+  ERROR: 'SYSTEM ERROR',
+};
+
+/**
+ * Category display names
+ */
+export const CategoryNames = {
+  1: 'Institution Pass',
+  2: 'Event Ticket',
+  3: 'General (1-Day)',
+  4: 'General Combo',
+};
+
+/**
+ * Verify a ticket by QR token (from QR code scan)
+ * 
+ * The QR code contains a qr_token string: "{UUID}.{HMAC_hex}"
+ * This is passed directly to the validate_scan RPC.
+ * 
+ * @param {string} qrToken - The raw string decoded from QR code
+ * @param {string} gateType - Gate type: "CONFERENCE" or "EVENT_<event_id>"
+ * @param {string} scannerDevice - Device identifier for audit trail
+ * @returns {Promise<object>} Validation result
+ */
+export async function verifyTicketByQRToken(qrToken, gateType, scannerDevice) {
   try {
-    // Validate UUID format
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-    if (!uuidRegex.test(ticketId)) {
+    if (!qrToken || typeof qrToken !== 'string' || qrToken.trim().length < 5) {
       return {
+        success: false,
         allowed: false,
-        reason: VerificationResult.INVALID_TICKET,
+        reason: ResultCodes.TICKET_NOT_FOUND,
         message: 'Invalid QR code format',
       };
     }
 
-    // Call the atomic verification function from Supabase
-    // This function checks ticket_status and updates it if valid
-    // Note: The database function should check ticket_status and set it to 'used' when verified
-    const { data, error } = await supabase.rpc('verify_and_mark_ticket', {
-      p_ticket_id: ticketId,
+    const { data, error } = await supabase.rpc('validate_scan', {
+      p_qr_token: qrToken.trim(),
+      p_gate_type: gateType,
+      p_scanner_device: scannerDevice || null,
     });
 
     if (error) {
-      console.error('Verification error:', error);
+      console.error('validate_scan RPC error:', error);
       return {
+        success: false,
         allowed: false,
-        reason: VerificationResult.ERROR,
+        reason: ResultCodes.ERROR,
         message: 'Verification failed. Please try again.',
       };
     }
 
-    // Return the result from the database function
-    // data.allowed = true if ticket is valid (ticket_status = 'valid')
-    // data.allowed = false if ticket is already used (ticket_status = 'used')
-    return {
-      allowed: data.allowed || false,
-      reason: data.reason || VerificationResult.ERROR,
-      message: data.message || 'Verification failed',
-      name: data.name,
-    };
+    // data is already the JSONB result from the RPC
+    return data;
   } catch (err) {
     console.error('Unexpected error:', err);
     return {
+      success: false,
       allowed: false,
-      reason: VerificationResult.ERROR,
+      reason: ResultCodes.ERROR,
       message: 'Connection error. Check your network.',
     };
   }
@@ -88,104 +112,71 @@ export async function verifyTicketById(ticketId, currentDay) {
 /**
  * Verify a ticket by 6-digit code (manual entry)
  * 
- * Single ticket type valid for both days.
- * Auto-refreshes after 14 hours (12-16 hour range midpoint).
+ * Looks up the ticket by code_6_digit, retrieves its qr_token,
+ * then runs validate_scan with that token.
  * 
  * @param {string} code - 6-digit code
- * @param {number} currentDay - Optional day parameter (kept for compatibility, not used in verification)
- * @returns {Promise<{
- *   allowed: boolean,
- *   reason: string,
- *   message: string,
- *   ticketType?: string,
- *   name?: string
- * }>}
+ * @param {string} gateType - Gate type
+ * @param {string} scannerDevice - Device identifier
+ * @returns {Promise<object>} Validation result
  */
-export async function verifyTicketByCode(code, currentDay) {
+export async function verifyTicketByCode(code, gateType, scannerDevice) {
   try {
-    // Validate code format - must be exactly 6 digits
+    // Validate code format
     if (!/^\d{6}$/.test(code)) {
       return {
+        success: false,
         allowed: false,
-        reason: VerificationResult.INVALID_TICKET,
+        reason: ResultCodes.TICKET_NOT_FOUND,
         message: 'Code must be 6 digits',
       };
     }
 
-    // Look up ticket by 6-digit code in the tickets table
-    // Try code_6_digit first (actual database column), then fallback to six_digit_code
-    let ticketData, lookupError, ticketId;
-    
-    // First try with code_6_digit (actual database column)
-    const query1 = supabase
+    // Look up ticket by 6-digit code to get the qr_token
+    const { data: ticket, error: lookupError } = await supabase
       .from('tickets')
-      .select('id')
+      .select('qr_token, id')
       .eq('code_6_digit', code)
       .single();
-    
-    const result1 = await query1;
-    ticketData = result1.data;
-    lookupError = result1.error;
-    ticketId = ticketData?.id;
 
-    // If error suggests column doesn't exist, try with six_digit_code
-    if (lookupError && (lookupError.message?.includes('column') || lookupError.message?.includes('does not exist'))) {
-      console.log('⚠️ [verifyTicketByCode] Trying with six_digit_code...');
-      const query2 = supabase
-        .from('tickets')
-        .select('id')
-        .eq('six_digit_code', code)
-        .single();
-      
-      const result2 = await query2;
-      ticketData = result2.data;
-      lookupError = result2.error;
-      ticketId = ticketData?.id;
-    }
-
-    if (lookupError) {
-      console.error('Lookup error:', lookupError);
+    if (lookupError || !ticket) {
       return {
+        success: false,
         allowed: false,
-        reason: VerificationResult.ERROR,
-        message: 'Lookup failed. Please try again.',
+        reason: ResultCodes.TICKET_NOT_FOUND,
+        message: 'Invalid code — ticket not found',
       };
     }
 
-    // If no ticket found, return invalid
-    if (!ticketId) {
-      return {
-        allowed: false,
-        reason: VerificationResult.INVALID_TICKET,
-        message: 'Invalid code - ticket not found',
-      };
+    // If ticket has a qr_token, use validate_scan
+    if (ticket.qr_token) {
+      return verifyTicketByQRToken(ticket.qr_token, gateType, scannerDevice);
     }
 
-    // Now verify the ticket using its UUID
-    // This will check ticket_status and update it if valid
-    return verifyTicketById(ticketId, currentDay);
+    // Fallback: ticket exists but no qr_token (legacy ticket without HMAC token)
+    // This shouldn't happen for properly issued tickets, but handle gracefully
+    return {
+      success: false,
+      allowed: false,
+      reason: ResultCodes.ERROR,
+      message: 'Ticket has no QR token. Please contact admin.',
+    };
   } catch (err) {
     console.error('Unexpected error:', err);
     return {
+      success: false,
       allowed: false,
-      reason: VerificationResult.ERROR,
+      reason: ResultCodes.ERROR,
       message: 'Connection error. Check your network.',
     };
   }
 }
 
 /**
- * Search tickets by email or code (for fallback verification)
+ * Search tickets by name, email, code, or college
  * 
- * @param {string} query - Search query (email or code)
- * @returns {Promise<Array<{
- *   id: string,
- *   six_digit_code: string,
- *   email: string,
- *   name: string,
- *   college: string,
- *   ticket_status: string
- * }>>}
+ * @param {string} query - Search query (min 3 chars)
+ * @returns {Promise<Array>} Array of ticket objects
  */
 export async function searchTickets(query) {
   try {
@@ -194,91 +185,36 @@ export async function searchTickets(query) {
     }
 
     const searchQuery = query.trim();
-    console.log('🔍 [searchTickets] Searching for:', searchQuery);
 
-    // Use direct query to match actual database schema
-    // Try different column combinations based on what exists in the database
-    let data, error;
-    
-    // First try with six_digit_code (new schema) - without registration_id
-    const query1 = supabase
+    const { data, error } = await supabase
       .from('tickets')
-      .select('id, email, name, college, six_digit_code, ticket_status')
-      .or(`name.ilike.%${searchQuery}%,email.ilike.%${searchQuery}%,six_digit_code.eq.${searchQuery},college.ilike.%${searchQuery}%`)
+      .select('id, email, name, college, phone, code_6_digit, qr_token, status, category, event_id, valid_days, usage_day1, usage_day2, usage_event, ticket_type, is_rit_student, last_used_at')
+      .or(`name.ilike.%${searchQuery}%,email.ilike.%${searchQuery}%,code_6_digit.eq.${searchQuery},college.ilike.%${searchQuery}%`)
       .limit(20);
-    
-    const result1 = await query1;
-    data = result1.data;
-    error = result1.error;
-
-    // If error suggests column doesn't exist, try with code_6_digit (old schema)
-    if (error && (error.message?.includes('column') || error.message?.includes('does not exist'))) {
-      console.log('⚠️ [searchTickets] Trying with code_6_digit (old schema)...');
-      const query2 = supabase
-        .from('tickets')
-        .select('id, email, name, college, code_6_digit, ticket_status')
-        .or(`name.ilike.%${searchQuery}%,email.ilike.%${searchQuery}%,code_6_digit.eq.${searchQuery},college.ilike.%${searchQuery}%`)
-        .limit(20);
-      
-      const result2 = await query2;
-      data = result2.data;
-      error = result2.error;
-      
-      // Map code_6_digit to six_digit_code for consistency
-      if (data) {
-        data = data.map(ticket => ({
-          ...ticket,
-          six_digit_code: ticket.code_6_digit || ticket.six_digit_code
-        }));
-      }
-    }
-
-    console.log('🔍 [searchTickets] Query result:', { 
-      data, 
-      error, 
-      dataLength: data?.length,
-      query: searchQuery,
-      errorMessage: error?.message 
-    });
 
     if (error) {
-      console.error('❌ [searchTickets] Query Error:', error);
-      console.error('❌ [searchTickets] Error details:', JSON.stringify(error, null, 2));
-      
-      // If it's an RLS error, provide helpful message
-      if (error.message?.includes('row-level security') || error.message?.includes('policy')) {
-        console.error('🚨 [searchTickets] RLS Policy Error - Need to allow anon SELECT on tickets table');
-      }
-      
+      console.error('Search error:', error);
       return [];
     }
 
-    console.log('✅ [searchTickets] Found tickets:', data?.length || 0);
-    if (data && data.length > 0) {
-      console.log('✅ [searchTickets] First result:', data[0]);
-    }
     return data || [];
   } catch (err) {
-    console.error('❌ [searchTickets] Unexpected error:', err);
-    console.error('❌ [searchTickets] Error stack:', err.stack);
+    console.error('Search unexpected error:', err);
     return [];
   }
 }
 
 /**
- * Get ticket status without marking as used (for display only)
+ * Get ticket status without marking as used (display only)
  * 
  * @param {string} ticketId - UUID of ticket
- * @returns {Promise<{
- *   found: boolean,
- *   ticket?: object
- * }>}
+ * @returns {Promise<{found: boolean, ticket?: object}>}
  */
 export async function getTicketStatus(ticketId) {
   try {
     const { data, error } = await supabase
       .from('tickets')
-      .select('*')
+      .select('id, name, email, college, phone, code_6_digit, status, category, event_id, valid_days, usage_day1, usage_day2, usage_event, ticket_type, is_rit_student, last_used_at, qr_token')
       .eq('id', ticketId)
       .single();
 
