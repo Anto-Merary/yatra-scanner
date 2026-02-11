@@ -113,14 +113,35 @@ export async function verifyTicketByCode(code, currentDay) {
     }
 
     // Look up ticket by 6-digit code in the tickets table
-    // Query the six_digit_code column directly
-    const { data: ticketData, error: lookupError } = await supabase
+    // Try code_6_digit first (actual database column), then fallback to six_digit_code
+    let ticketData, lookupError, ticketId;
+    
+    // First try with code_6_digit (actual database column)
+    const query1 = supabase
       .from('tickets')
       .select('id')
-      .eq('six_digit_code', code)
+      .eq('code_6_digit', code)
       .single();
     
-    const ticketId = ticketData?.id;
+    const result1 = await query1;
+    ticketData = result1.data;
+    lookupError = result1.error;
+    ticketId = ticketData?.id;
+
+    // If error suggests column doesn't exist, try with six_digit_code
+    if (lookupError && (lookupError.message?.includes('column') || lookupError.message?.includes('does not exist'))) {
+      console.log('⚠️ [verifyTicketByCode] Trying with six_digit_code...');
+      const query2 = supabase
+        .from('tickets')
+        .select('id')
+        .eq('six_digit_code', code)
+        .single();
+      
+      const result2 = await query2;
+      ticketData = result2.data;
+      lookupError = result2.error;
+      ticketId = ticketData?.id;
+    }
 
     if (lookupError) {
       console.error('Lookup error:', lookupError);

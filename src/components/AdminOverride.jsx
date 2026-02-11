@@ -85,7 +85,7 @@ export default function AdminOverride({ onClose, onResult }) {
     setActionInProgress(true);
     const result = await adminForceAllow(
       selectedTicket.id,
-      currentDay,
+      null, // currentDay not needed for single ticket type
       actionReason,
       adminName
     );
@@ -120,7 +120,7 @@ export default function AdminOverride({ onClose, onResult }) {
     setActionInProgress(true);
     const result = await adminResetEntry(
       selectedTicket.id,
-      currentDay,
+      null, // currentDay not needed for single ticket type
       actionReason,
       adminName
     );
@@ -235,62 +235,54 @@ export default function AdminOverride({ onClose, onResult }) {
         {selectedTicket && (
           <div className="admin-ticket-details">
             <button onClick={() => setSelectedTicket(null)} className="back-btn">
-              ← Back to Search
+              ← Back
             </button>
 
+            {/* Compact ticket info */}
             <div className="admin-ticket-card">
-              <h3>Ticket Details</h3>
-              <div className="admin-detail-row">
-                <span className="label">Code:</span>
-                <span className="value">{selectedTicket.six_digit_code}</span>
-              </div>
-              <div className="admin-detail-row">
-                <span className="label">Name:</span>
-                <span className="value">{selectedTicket.name}</span>
-              </div>
-              <div className="admin-detail-row">
-                <span className="label">Email:</span>
-                <span className="value">{selectedTicket.email}</span>
-              </div>
-              {selectedTicket.college && (
-                <div className="admin-detail-row">
-                  <span className="label">College:</span>
-                  <span className="value">{selectedTicket.college}</span>
-                </div>
-              )}
-              <div className="admin-detail-row">
-                <span className="label">Status:</span>
-                <span className={`value ${selectedTicket.ticket_status === 'used' ? 'used' : 'unused'}`}>
-                  {selectedTicket.ticket_status || 'Unknown'}
+              <div className="admin-ticket-header">
+                <div className="admin-ticket-code-large">{selectedTicket.six_digit_code}</div>
+                <span className={`admin-status-badge ${selectedTicket.ticket_status === 'used' ? 'used' : 'valid'}`}>
+                  {selectedTicket.ticket_status === 'used' ? 'Used' : 'Valid'}
                 </span>
               </div>
-              {selectedTicket.registration_id && (
-                <div className="admin-detail-row">
-                  <span className="label">Registration ID:</span>
-                  <span className="value">{selectedTicket.registration_id}</span>
+              
+              <div className="admin-ticket-info-compact">
+                <div className="admin-info-item">
+                  <span className="info-label">Name</span>
+                  <span className="info-value">{selectedTicket.name}</span>
                 </div>
-              )}
+                <div className="admin-info-item">
+                  <span className="info-label">Email</span>
+                  <span className="info-value">{selectedTicket.email}</span>
+                </div>
+                {selectedTicket.college && (
+                  <div className="admin-info-item">
+                    <span className="info-label">College</span>
+                    <span className="info-value">{selectedTicket.college}</span>
+                  </div>
+                )}
+              </div>
             </div>
 
-            {/* Override actions */}
+            {/* Override actions - simplified */}
             <div className="admin-actions-card">
-              <h3>Override Actions</h3>
-              
-              <input
-                type="text"
-                value={adminName}
-                onChange={(e) => setAdminName(e.target.value)}
-                placeholder="Your name (for audit)"
-                className="admin-name-input"
-              />
-              
-              <textarea
-                value={actionReason}
-                onChange={(e) => setActionReason(e.target.value)}
-                placeholder="Reason for override (minimum 10 characters)..."
-                rows={3}
-                className="admin-reason-input"
-              />
+              <div className="admin-form-group">
+                <input
+                  type="text"
+                  value={adminName}
+                  onChange={(e) => setAdminName(e.target.value)}
+                  placeholder="Your name"
+                  className="admin-name-input"
+                />
+                <textarea
+                  value={actionReason}
+                  onChange={(e) => setActionReason(e.target.value)}
+                  placeholder="Reason (min 10 chars)"
+                  rows={2}
+                  className="admin-reason-input"
+                />
+              </div>
 
               <div className="admin-action-buttons">
                 <button
@@ -298,37 +290,38 @@ export default function AdminOverride({ onClose, onResult }) {
                   disabled={actionInProgress || !actionReason || !adminName}
                   className="force-allow-btn"
                 >
-                  Force Allow Entry
+                  {actionInProgress ? 'Processing...' : 'Force Allow'}
                 </button>
                 <button
                   onClick={handleResetEntry}
                   disabled={actionInProgress || !actionReason || !adminName}
                   className="reset-entry-btn"
                 >
-                  Reset Entry
+                  {actionInProgress ? 'Processing...' : 'Reset Entry'}
                 </button>
               </div>
             </div>
 
-            {/* Override logs */}
+            {/* Override logs - compact */}
             {overrideLogs.length > 0 && (
               <div className="admin-logs-card">
-                <h3>Override History</h3>
-                {overrideLogs.map((log) => (
-                  <div key={log.id} className="admin-log-entry">
-                    <div className="log-header">
-                      <span className={`log-action ${log.admin_action.toLowerCase()}`}>
-                        {log.admin_action}
-                      </span>
-                      <span className="log-day">{log.day}</span>
-                      <span className="log-time">
-                        {new Date(log.created_at).toLocaleString()}
-                      </span>
+                <h4>History ({overrideLogs.length})</h4>
+                <div className="admin-logs-list">
+                  {overrideLogs.map((log) => (
+                    <div key={log.id} className="admin-log-entry-compact">
+                      <div className="log-header-compact">
+                        <span className={`log-action-badge ${log.admin_action.toLowerCase()}`}>
+                          {log.admin_action}
+                        </span>
+                        <span className="log-time-compact">
+                          {new Date(log.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                      <div className="log-reason-compact">{log.reason}</div>
+                      <div className="log-admin-compact">{log.admin_identifier}</div>
                     </div>
-                    <div className="log-reason">{log.reason}</div>
-                    <div className="log-admin">By: {log.admin_identifier}</div>
-                  </div>
-                ))}
+                  ))}
+                </div>
               </div>
             )}
           </div>
