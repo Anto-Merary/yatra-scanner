@@ -132,35 +132,28 @@ export async function verifyTicketByCode(code, gateType, scannerDevice) {
       };
     }
 
-    // Look up ticket by 6-digit code to get the qr_token
-    const { data: ticket, error: lookupError } = await supabase
-      .from('tickets')
-      .select('qr_token, id')
-      .eq('code_6_digit', code)
-      .single();
+    // Call the backup validation RPC directly
+    // This allows validation even if qr_token is null (e.g., imported tickets)
+    const { data, error } = await supabase.rpc('validate_ticket_by_code', {
+      p_code_6_digit: code,
+      p_gate_type: gateType,
+      p_scanner_device: scannerDevice || null,
+    });
 
-    if (lookupError || !ticket) {
+    if (error) {
+      console.error('validate_ticket_by_code RPC error:', error);
+      // If error is JSON (from RPC exception), parse it?
+      // Actually our RPC returns JSONB on success/failure logic, but real exceptions are different.
+      // Typical RPC error here would be network or 500.
       return {
         success: false,
         allowed: false,
-        reason: ResultCodes.TICKET_NOT_FOUND,
-        message: 'Invalid code — ticket not found',
+        reason: ResultCodes.ERROR,
+        message: 'Verification failed. Please try again.',
       };
     }
 
-    // If ticket has a qr_token, use validate_scan
-    if (ticket.qr_token) {
-      return verifyTicketByQRToken(ticket.qr_token, gateType, scannerDevice);
-    }
-
-    // Fallback: ticket exists but no qr_token (legacy ticket without HMAC token)
-    // This shouldn't happen for properly issued tickets, but handle gracefully
-    return {
-      success: false,
-      allowed: false,
-      reason: ResultCodes.ERROR,
-      message: 'Ticket has no QR token. Please contact admin.',
-    };
+    return data;
   } catch (err) {
     console.error('Unexpected error:', err);
     return {
