@@ -36,6 +36,7 @@ export default function ResultScreen({ result, onDismiss, onManualSearch }) {
   const validDays = ticket?.valid_days;
   const usageDay1 = ticket?.usage_day1;
   const usageDay2 = ticket?.usage_day2;
+  const passCategory = ticket?.pass_category;
 
   // Auto-dismiss after 6 seconds
   useEffect(() => {
@@ -54,6 +55,7 @@ export default function ResultScreen({ result, onDismiss, onManualSearch }) {
   // Get category display name
   const getCategoryName = () => {
     if (!category) return null;
+    if (ticketType === 'General Public') return 'General Public';
     return CategoryNames[category] || `Category ${category}`;
   };
 
@@ -116,10 +118,10 @@ export default function ResultScreen({ result, onDismiss, onManualSearch }) {
   return (
     <div
       className={`result-screen ${allowed
-          ? 'result-allowed'
-          : reason === 'ALREADY_USED_TODAY'
-            ? 'result-warning'
-            : 'result-rejected'
+        ? 'result-allowed'
+        : reason === 'ALREADY_USED_TODAY'
+          ? 'result-warning'
+          : 'result-rejected'
         }`}
       onClick={onDismiss}
     >
@@ -141,6 +143,11 @@ export default function ResultScreen({ result, onDismiss, onManualSearch }) {
             {category && (
               <span className={`result-badge badge-category ${getCategoryClass()}`}>
                 {getCategoryName()}
+              </span>
+            )}
+            {passCategory && (
+              <span className="result-badge badge-type">
+                {passCategory}
               </span>
             )}
             {ticketType && !category && (

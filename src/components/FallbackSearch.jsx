@@ -105,10 +105,19 @@ export default function FallbackSearch({ onResult, gateType, scannerDevice }) {
                 </div>
 
                 <div className="ticket-details">
-                  {ticket.name && <p className="ticket-name">{ticket.name}</p>}
+                  {ticket.ticket_type === 'General Public' ? (
+                    <p className="ticket-name"><strong>General Public</strong></p>
+                  ) : (
+                    ticket.name && <p className="ticket-name">{ticket.name}</p>
+                  )}
                   {ticket.email && <p className="ticket-email">{ticket.email}</p>}
                   {ticket.college && <p className="ticket-college">{ticket.college}</p>}
-                  {ticket.category && (
+                  {ticket.ticket_type === 'General Public' && ticket.pass_category && (
+                    <p className="ticket-pass-category badge-type" style={{ display: 'inline-block', padding: '2px 6px', borderRadius: '4px', background: '#e0e0e0', color: '#333', fontSize: '0.8em', marginTop: '4px' }}>
+                      {ticket.pass_category}
+                    </p>
+                  )}
+                  {ticket.category && ticket.ticket_type !== 'General Public' && (
                     <p className="ticket-category-label">
                       {CategoryNames[ticket.category] || `Category ${ticket.category}`}
                       {ticket.event_id ? ` — ${ticket.event_id}` : ''}

@@ -181,7 +181,7 @@ export async function searchTickets(query) {
 
     const { data, error } = await supabase
       .from('tickets')
-      .select('id, email, name, college, phone, code_6_digit, qr_token, status, category, event_id, valid_days, usage_day1, usage_day2, usage_event, ticket_type, is_rit_student, last_used_at')
+      .select('id, email, name, college, phone, code_6_digit, qr_token, status, category, event_id, valid_days, usage_day1, usage_day2, usage_event, ticket_type, pass_category, is_rit_student, last_used_at')
       .or(`name.ilike.%${searchQuery}%,email.ilike.%${searchQuery}%,code_6_digit.eq.${searchQuery},college.ilike.%${searchQuery}%`)
       .limit(20);
 
@@ -207,7 +207,7 @@ export async function getTicketStatus(ticketId) {
   try {
     const { data, error } = await supabase
       .from('tickets')
-      .select('id, name, email, college, phone, code_6_digit, status, category, event_id, valid_days, usage_day1, usage_day2, usage_event, ticket_type, is_rit_student, last_used_at, qr_token')
+      .select('id, name, email, college, phone, code_6_digit, status, category, event_id, valid_days, usage_day1, usage_day2, usage_event, ticket_type, pass_category, is_rit_student, last_used_at, qr_token')
       .eq('id', ticketId)
       .single();
 
