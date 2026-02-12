@@ -115,7 +115,12 @@ export default function ResultScreen({ result, onDismiss, onManualSearch }) {
 
   return (
     <div
-      className={`result-screen ${allowed ? 'result-allowed' : 'result-rejected'}`}
+      className={`result-screen ${allowed
+          ? 'result-allowed'
+          : reason === 'ALREADY_USED_TODAY'
+            ? 'result-warning'
+            : 'result-rejected'
+        }`}
       onClick={onDismiss}
     >
       <div className="result-content">
