@@ -134,19 +134,16 @@ export async function verifyTicketByCode(code, gateType, scannerDevice) {
       };
     }
 
-    // Call the backup validation RPC directly
-    // This allows validation even if qr_token is null (e.g., imported tickets)
-    const { data, error } = await supabase.rpc('validate_ticket_by_code', {
-      p_code_6_digit: code,
+    // Call the new unified validation RPC
+    // It handles 6-digit codes as well (OR condition in SQL)
+    const { data, error } = await supabase.rpc('validate_scan_unified', {
+      p_qr_token: code,
       p_gate_type: gateType,
       p_scanner_device: scannerDevice || null,
     });
 
     if (error) {
-      console.error('validate_ticket_by_code RPC error:', error);
-      // If error is JSON (from RPC exception), parse it?
-      // Actually our RPC returns JSONB on success/failure logic, but real exceptions are different.
-      // Typical RPC error here would be network or 500.
+      console.error('validate_scan_unified RPC error:', error);
       return {
         success: false,
         allowed: false,
