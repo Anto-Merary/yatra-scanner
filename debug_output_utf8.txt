@@ -1,0 +1,43 @@
+
+--- Debugging Ticket: 568789 ---
+Ticket Data Found:
+- ID: 6d300326-ccdf-4374-a533-7b798b7fd50e
+- Code: 568789
+- QR Token: '6d300326-ccdf-4374-a533-7b798b7fd50e.1468f6ce87504badf0a7037f44e3eb9397b6a24db0e36b2697e16b02c696e13a'
+- QR Token Length: 101
+- QR Token Bytes: 36643330303332362d636364662d343337342d613533332d3762373938623766643530652e31343638663663653837353034626164663061373033376634346533656239333937623661323464623065333662323639376531366230326336393665313361
+- Last Used: 2026-02-13T01:38:48.287067+00:00
+- Status: active
+
+Testing RPC with CODE...
+Result (using code): {
+  reason: 'TICKET_NOT_FOUND',
+  allowed: false,
+  message: 'Invalid Ticket',
+  success: false
+}
+
+Testing RPC with QR TOKEN ('6d300326-ccdf-4374-a533-7b798b7fd50e.1468f6ce87504badf0a7037f44e3eb9397b6a24db0e36b2697e16b02c696e13a')...
+Result (using qr_token): {
+  reason: 'TICKET_NOT_FOUND',
+  allowed: false,
+  message: 'Invalid Ticket',
+  success: false
+}
+
+Testing verify_and_mark_ticket('6d300326-ccdf-4374-a533-7b798b7fd50e')...
+verify_and_mark_ticket Result: {
+  name: 'Avanthika S',
+  email: 'avanthika1608@gmail.com',
+  phone: '9566170426',
+  reason: 'ALREADY_USED',
+  allowed: false,
+  college: 'RIT',
+  message: 'Ticket already used today. Valid again after midnight.',
+  success: true,
+  ticket_id: '6d300326-ccdf-4374-a533-7b798b7fd50e',
+  ticket_type: 'Student Pass',
+  code_6_digit: '568789',
+  last_used_at: '2026-02-13T01:38:48.287067+00:00',
+  is_rit_student: true
+}

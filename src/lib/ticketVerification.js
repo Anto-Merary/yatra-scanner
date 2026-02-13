@@ -59,108 +59,95 @@ export const CategoryNames = {
 };
 
 /**
+ * Helper to map RPC result to UI result
+ */
+function mapRpcResult(rpcData) {
+  if (!rpcData) return { success: false, allowed: false, reason: ResultCodes.ERROR, message: 'No data returned' };
+
+  // RPC returns flat object, UI expects nested ticket object
+  const {
+    success, allowed, reason, message,
+    ...ticketFields
+  } = rpcData;
+
+  return {
+    success,
+    allowed,
+    reason,
+    message,
+    ticket: Object.keys(ticketFields).length > 0 ? ticketFields : null
+  };
+}
+
+/**
  * Verify a ticket by QR token (from QR code scan)
- * 
- * The QR code contains a qr_token string: "{UUID}.{HMAC_hex}"
- * This is passed directly to the validate_scan_unified RPC.
- * This new RPC handles checks across all registration tables.
- * 
- * @param {string} qrToken - The raw string decoded from QR code
- * @param {string} gateType - Gate type: "CONFERENCE" or "EVENT_<event_id>"
- * @param {string} scannerDevice - Device identifier for audit trail
- * @returns {Promise<object>} Validation result
  */
 export async function verifyTicketByQRToken(qrToken, gateType, scannerDevice) {
   try {
     if (!qrToken || typeof qrToken !== 'string' || qrToken.trim().length < 5) {
-      return {
-        success: false,
-        allowed: false,
-        reason: ResultCodes.TICKET_NOT_FOUND,
-        message: 'Invalid QR code format',
-      };
+      return { success: false, allowed: false, reason: ResultCodes.TICKET_NOT_FOUND, message: 'Invalid QR code format' };
     }
 
-    // Call the new unified validation RPC
+    const token = qrToken.trim();
+
+    // 1. Try Client-Side Lookup in `tickets` table (Bypasses broken RPC lookup)
+    const { data: tickets, error: searchError } = await supabase
+      .from('tickets')
+      .select('*')
+      .or(`qr_token.eq.${token},code_6_digit.eq.${token}`)
+      .limit(1);
+
+    if (tickets && tickets.length > 0) {
+      const ticket = tickets[0];
+
+      // Found! Call verify_and_mark_ticket RPC
+      const { data, error } = await supabase.rpc('verify_and_mark_ticket', {
+        p_ticket_id: ticket.id
+      });
+
+      if (error) {
+        console.error('verify_and_mark_ticket RPC error:', error);
+        return { success: false, allowed: false, reason: ResultCodes.ERROR, message: 'Verification Error' };
+      }
+      return mapRpcResult(data);
+    }
+
+    // 2. Fallback: Call validate_scan_unified (for other tables)
+    // If client-side search failed, maybe it's in another table?
     const { data, error } = await supabase.rpc('validate_scan_unified', {
-      p_qr_token: qrToken.trim(),
+      p_qr_token: token,
       p_gate_type: gateType,
       p_scanner_device: scannerDevice || null,
     });
 
     if (error) {
       console.error('validate_scan_unified RPC error:', error);
-      return {
-        success: false,
-        allowed: false,
-        reason: ResultCodes.ERROR,
-        message: 'Verification failed. Please try again.',
-      };
+      return { success: false, allowed: false, reason: ResultCodes.ERROR, message: 'Verification failed.' };
     }
 
-    // data is already the JSONB result from the RPC
     return data;
   } catch (err) {
     console.error('Unexpected error:', err);
-    return {
-      success: false,
-      allowed: false,
-      reason: ResultCodes.ERROR,
-      message: 'Connection error. Check your network.',
-    };
+    return { success: false, allowed: false, reason: ResultCodes.ERROR, message: 'Connection error.' };
   }
 }
 
 /**
  * Verify a ticket by 6-digit code (manual entry)
- * 
- * Looks up the ticket by code_6_digit, retrieves its qr_token,
- * then runs validate_scan with that token.
- * 
- * @param {string} code - 6-digit code
- * @param {string} gateType - Gate type
- * @param {string} scannerDevice - Device identifier
- * @returns {Promise<object>} Validation result
  */
 export async function verifyTicketByCode(code, gateType, scannerDevice) {
   try {
     // Validate code format
     if (!/^\d{6}$/.test(code)) {
-      return {
-        success: false,
-        allowed: false,
-        reason: ResultCodes.TICKET_NOT_FOUND,
-        message: 'Code must be 6 digits',
-      };
+      return { success: false, allowed: false, reason: ResultCodes.TICKET_NOT_FOUND, message: 'Code must be 6 digits' };
     }
 
-    // Call the new unified validation RPC
-    // It handles 6-digit codes as well (OR condition in SQL)
-    const { data, error } = await supabase.rpc('validate_scan_unified', {
-      p_qr_token: code,
-      p_gate_type: gateType,
-      p_scanner_device: scannerDevice || null,
-    });
+    // Reuse the same logic as QR token since we handle code lookup there too
+    return await verifyTicketByQRToken(code, gateType, scannerDevice);
 
-    if (error) {
-      console.error('validate_scan_unified RPC error:', error);
-      return {
-        success: false,
-        allowed: false,
-        reason: ResultCodes.ERROR,
-        message: 'Verification failed. Please try again.',
-      };
-    }
-
-    return data;
   } catch (err) {
     console.error('Unexpected error:', err);
-    return {
-      success: false,
-      allowed: false,
-      reason: ResultCodes.ERROR,
-      message: 'Connection error. Check your network.',
-    };
+    return { success: false, allowed: false, reason: ResultCodes.ERROR, message: 'Connection error.' };
   }
 }
 
