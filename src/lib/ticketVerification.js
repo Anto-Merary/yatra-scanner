@@ -62,7 +62,8 @@ export const CategoryNames = {
  * Verify a ticket by QR token (from QR code scan)
  * 
  * The QR code contains a qr_token string: "{UUID}.{HMAC_hex}"
- * This is passed directly to the validate_scan RPC.
+ * This is passed directly to the validate_scan_unified RPC.
+ * This new RPC handles checks across all registration tables.
  * 
  * @param {string} qrToken - The raw string decoded from QR code
  * @param {string} gateType - Gate type: "CONFERENCE" or "EVENT_<event_id>"
@@ -80,14 +81,15 @@ export async function verifyTicketByQRToken(qrToken, gateType, scannerDevice) {
       };
     }
 
-    const { data, error } = await supabase.rpc('validate_scan', {
+    // Call the new unified validation RPC
+    const { data, error } = await supabase.rpc('validate_scan_unified', {
       p_qr_token: qrToken.trim(),
       p_gate_type: gateType,
       p_scanner_device: scannerDevice || null,
     });
 
     if (error) {
-      console.error('validate_scan RPC error:', error);
+      console.error('validate_scan_unified RPC error:', error);
       return {
         success: false,
         allowed: false,
